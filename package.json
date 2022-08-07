@@ -9,6 +9,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "blru": "^0.1.6",
     "node-forge": "^1.2.1"
   }
 }

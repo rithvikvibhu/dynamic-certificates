@@ -1,5 +1,6 @@
 const fs = require('fs');
 const tls = require('tls');
+const LRU = require('blru');
 const forge = require('node-forge');
 const pki = forge.pki;
 
@@ -29,6 +30,8 @@ class DynamicCertificates {
     }
 
     this.importKeyPair(publicKey, privateKey);
+
+    this.certCache = new CertificateCache(50, 24 * 60 * 60 * 1000);
   }
 
   /**
@@ -38,14 +41,20 @@ class DynamicCertificates {
    */
   sniCallback = (serverName, callback) => {
     // Must be an arrow function to use `this`
-    const cert = this.createCertifcate(serverName);
+    let cert = this.certCache.get(serverName);
+
+    if (!cert) {
+      const certificate = this.createCertifcate(serverName);
+      cert = {
+        cert: pki.certificateToPem(certificate.certificate),
+        key: pki.privateKeyToPem(certificate.privateKey),
+      }
+      this.certCache.set(serverName, cert);
+    }
 
     callback(
       null,
-      new tls.createSecureContext({
-        cert: pki.certificateToPem(cert.certificate),
-        key: pki.privateKeyToPem(cert.privateKey),
-      })
+      new tls.createSecureContext(cert)
     );
   };
 
@@ -161,6 +170,39 @@ class DynamicCertificates {
       '00';
 
     return serial;
+  }
+}
+
+/**
+ * Certificate Cache
+ */
+class CertificateCache {
+  constructor(size, ttl) {
+    this.cache = new LRU(size);
+    this.ttl = ttl;
+  }
+
+  set(serverName, certificate) {
+    this.cache.set(serverName, {
+      time: Date.now(),
+      certificate,
+    });
+
+    return this;
+  }
+
+  get(serverName) {
+    const item = this.cache.get(serverName);
+
+    if (!item)
+      return null;
+
+    if (Date.now() > item.time + this.ttl) {
+      this.cache.remove(serverName);
+      return null;
+    }
+
+    return item.certificate;
   }
 }
 
